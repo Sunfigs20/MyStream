@@ -1,0 +1,16 @@
+# dependencies
+node_modules/
+
+# downloaded media (git does not track your video files)
+media/*
+!media/.gitkeep
+
+# generated catalog (git does not track the scraped data)
+out/*
+!out/.gitkeep
+
+# logs / junk
+*.log
+scrape_test.*
+.DS_Store
+Thumbs.db

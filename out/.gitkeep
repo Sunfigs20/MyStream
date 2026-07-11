@@ -1,0 +1,2 @@
+# keep these folders in git even though the real content is gitignored
+.this-file-is-a-placeholder

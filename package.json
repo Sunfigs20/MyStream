@@ -1,0 +1,28 @@
+{
+  "name": "mystream",
+  "version": "1.0.0",
+  "description": "A Netflix-style streaming frontend for anime, series, and movies for local streaming - built with vanilla JS.",
+  "main": "server.mjs",
+  "type": "module",
+  "scripts": {
+    "scrape": "node unified-scraper.mjs",
+    "download": "node unified-download.mjs",
+    "server": "node server.mjs",
+    "refresh": "node refresh-meta.mjs"
+  },
+  "keywords": [
+    "streaming",
+    "anime",
+    "series",
+    "movies",
+    "local",
+    "vanilla-js"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ffmpeg-static": "^5.3.0",
+    "playwright": "^1.61.1",
+    "ws": "^8.21.0"
+  }
+}

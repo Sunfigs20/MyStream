@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#0b0b0f" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>MYSTREAM</title>
+    <link rel="stylesheet" href="/style.css?v=7" />
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js">
+    </script>
+</head>
+<body>
+    <!-- TOPBAR -->
+    <header class="topbar" id="topbar">
+        <div class="topbar-inner">
+            <div class="brand">MY<span>STREAM</span></div>
+            <div class="source-dropdown" id="sourceDropdown">
+                <button class="source-dropdown-toggle" id="sourceDropdownToggle">
+                    <span id="sourceDropdownLabel">All</span>
+                    <svg class="dropdown-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                </button>
+                <div class="source-dropdown-menu" id="sourceDropdownMenu">
+                    <button class="source-dropdown-item active" data-source="all" data-i18n="src.all">All</button>
+                    <button class="source-dropdown-item" data-source="aniworld" data-i18n="src.anime">Anime</button>
+                    <button class="source-dropdown-item" data-source="sto" data-i18n="src.series">Series</button>
+                    <button class="source-dropdown-item" data-source="filmpalast" data-i18n="src.movies">Movies</button>
+                </div>
+            </div>
+            <nav class="navlinks" id="navlinks">
+                <button class="navlink active" data-nav="home" data-i18n="nav.home">Home</button>
+                <button class="navlink" data-nav="mylist" data-i18n="nav.mylist">My List</button>
+                <button class="navlink" data-nav="watchparty" data-i18n="nav.watchparty">Watch Party</button>
+                <button class="navlink" data-nav="settings" data-i18n="nav.settings">Settings</button>
+            </nav>
+            <div class="topbar-actions">
+                <button class="icon-btn" id="shuffleBtn" aria-label="Surprise me" data-i18n-title="btn.surprise" title="Surprise me">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h4l6 8 6 8h4M4 20h4l3-4M14 4h6v6M20 4l-6.5 8.5M14 20h6v-6"/></svg>
+                </button>
+                <button class="icon-btn" id="debugBtn" aria-label="Debug" data-i18n-title="btn.debug" title="Toggle debug logs" style="display:none">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4m0-4h.01"/></svg>
+                </button>
+                <div class="searchbox" id="searchbox">
+                    <button class="icon-btn" id="searchToggle" aria-label="Search" data-i18n-title="btn.search" title="Search">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3" stroke-linecap="round"/></svg>
+                    </button>
+                    <input id="search" type="search" data-i18n-ph="search.placeholder" placeholder="Search titles, genres..." autocomplete="off" />
+                </div>
+                <div class="lang-dropdown" id="langDropdown">
+                    <button class="lang-dropdown-toggle" id="langDropdownToggle">
+                        <span id="langDropdownLabel">All</span>
+                        <svg class="dropdown-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                    <div class="lang-dropdown-menu" id="langDropdownMenu">
+                        <button class="lang-dropdown-item active" data-lang="all" data-i18n="lang.all">All</button>
+                        <button class="lang-dropdown-item" data-lang="GerDub">GerDub</button>
+                        <button class="lang-dropdown-item" data-lang="EngSub">EngSub</button>
+                        <button class="lang-dropdown-item" data-lang="GerSub">GerSub</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="genres noscrollbar" id="genres"></div>
+    </header>
+
+    <!-- MAIN VIEW -->
+    <main id="view"></main>
+
+    <!-- BOTTOM NAV (mobile) -->
+    <nav class="bottomnav" id="bottomnav">
+        <button class="bnav-item active" data-nav="home">
+            <span class="bnav-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></span>
+            <span data-i18n="nav.home">Home</span>
+        </button>
+        <button class="bnav-item" data-nav="search">
+            <span class="bnav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3" stroke-linecap="round"/></svg></span>
+            <span data-i18n="nav.search">Search</span>
+        </button>
+        <button class="bnav-item" data-nav="watchparty">
+            <span class="bnav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+            <span data-i18n="nav.watchparty">Watch Party</span>
+        </button>
+        <button class="bnav-item" data-nav="mylist">
+            <span class="bnav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg></span>
+            <span data-i18n="nav.mylist">My List</span>
+        </button>
+        <button class="bnav-item" data-nav="settings">
+            <span class="bnav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
+            <span data-i18n="nav.settings">Settings</span>
+        </button>
+    </nav>
+
+    <div id="modalRoot"></div>
+    <div id="playerRoot"></div>
+    <div id="toast" class="toast"></div>
+
+    <script src="/app.js?v=8">
+    </script>
+</body>
+</html>
