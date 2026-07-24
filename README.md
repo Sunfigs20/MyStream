@@ -65,6 +65,15 @@ where the stuff you don't want in git ends up). On first run just scrape and
 
 ---
 
+## Releases
+
+| Version | Description |
+|---------|-------------|
+| [v1.0.0](https://github.com/Sunfigs20/MyStream) | Initial release: anime, series and movies from aniworld, S.to and filmpalast. Scraper, downloader, web UI and Watch Party included. |
+| [v1.1.0](https://github.com/Sunfigs20/MyStream/releases/tag/v1.1.0) | Manga support (MangaDex), faster scraper with worker pool, manga reader, crash protection, retry system, RAM monitoring and many UI improvements. |
+
+---
+
 ## Setup
 
 You need:
