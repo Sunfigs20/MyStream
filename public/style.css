@@ -492,6 +492,8 @@ main {
     inset: 0;
     background-size: cover;
     background-position: center 20%;
+    transform: scale(1.08);
+    filter: blur(3px);
     transition: transform 0.6s ease;
 }
 .hero-bg::after {
@@ -639,7 +641,7 @@ main {
     gap: 10px;
     overflow-x: auto;
     scroll-behavior: smooth;
-    padding: 4px var(--gutter) 14px;
+    padding: 10px var(--gutter) 24px;
     scroll-snap-type: x proximity;
     -webkit-overflow-scrolling: touch;
     touch-action: pan-x;
@@ -770,10 +772,6 @@ main {
     background: linear-gradient(160deg, #22222e, #16161d);
     border: 1px solid #ffffff14;
     box-shadow: 0 6px 16px #00000066;
-    transition: box-shadow 0.25s ease;
-}
-.card:hover .card-poster {
-    box-shadow: 0 14px 34px #000000aa;
 }
 .card-poster img {
     position: absolute;
@@ -910,13 +908,7 @@ main {
     transition: width 0.4s ease;
 }
 
-/* Netflix-style hover zoom */
 @media (hover: hover) and (pointer: fine) {
-    .card:hover {
-        transform: scale(1.14) translateY(-6px);
-        z-index: 10;
-        box-shadow: 0 20px 50px #000000cc;
-    }
     .card:hover .card-overlay {
         opacity: 1;
     }
@@ -1123,10 +1115,42 @@ main {
     color: #fff;
 }
 
+.hoster-row {
+    margin-bottom: 14px;
+}
+.movie-hosters {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 8px 0;
+}
+.movie-hosters .hoster-btn {
+    background: #1c1c26;
+    color: #9a9aa5;
+    border: 1px solid #2c2c38;
+    border-radius: 8px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    white-space: nowrap;
+}
+.movie-hosters .hoster-btn:hover {
+    border-color: #4a4a5a;
+    color: #f5f5f7;
+}
+.modal-cast {
+    color: #9a9aa5;
+    font-size: 13px;
+    margin-top: 4px;
+}
+
 .ep-list {
     display: flex;
     flex-direction: column;
     gap: 2px;
+}
+.ep-list.hidden, .season-tabs.hidden {
+    display: none !important;
 }
 .ep-row {
     display: flex;
@@ -1353,8 +1377,6 @@ main {
 }
 @media (min-width: 769px) {
     .player-controls-overlay {
-        opacity: 1;
-        pointer-events: auto;
         background: linear-gradient(180deg, transparent 30%, rgba(0, 0, 0, 0.6) 100%);
     }
 }
@@ -1387,6 +1409,7 @@ main {
     justify-content: center;
     flex-shrink: 0;
     min-height: 200px;
+    cursor: pointer;
 }
 .player-box video,
 .player-box iframe {
@@ -1506,12 +1529,12 @@ main {
         width: 100%;
     }
     .ctrl-buttons button {
-        width: 30px;
-        height: 30px;
+        width: 34px;
+        height: 34px;
     }
     .ctrl-buttons button svg {
-        width: 15px;
-        height: 15px;
+        width: 16px;
+        height: 16px;
     }
     .player-top {
         padding: 6px 10px;
@@ -1530,7 +1553,6 @@ main {
     }
 }
 
-/* Player controls overlay */
 .player-controls-overlay {
     position: absolute;
     inset: 0;
@@ -1610,8 +1632,8 @@ main {
     flex-wrap: wrap;
 }
 .ctrl-buttons button {
-    width: 36px;
-    height: 36px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%;
     background: #ffffff14;
     border: none;
@@ -1628,6 +1650,14 @@ main {
 }
 .ctrl-buttons button:active {
     transform: scale(0.9);
+}
+.ctrl-buttons button:focus-visible,
+.player-back:focus-visible,
+.hoster-btn:focus-visible,
+.action-btn:focus-visible,
+.ctrl-progress input[type="range"]:focus-visible {
+    outline: 2px solid #e50914;
+    outline-offset: 2px;
 }
 .ctrl-buttons button svg {
     width: 18px;
@@ -1712,7 +1742,6 @@ main {
     text-align: center;
 }
 
-/* Player bottom bar (hoster, next, etc) */
 .player-bottom {
     background: #111116;
     border-top: 1px solid #1c1c26;
@@ -1875,7 +1904,6 @@ main {
     flex-shrink: 0;
 }
 
-/* Next-up prompt inside player */
 .next-up {
     position: absolute;
     right: 20px;
@@ -1968,7 +1996,6 @@ main {
     }
 }
 
-/* AirPlay button */
 .airplay-btn {
     background: none;
     border: none;
@@ -2200,7 +2227,6 @@ main {
     }
 }
 
-/* Tablet / small laptop player adjustments */
 @media (max-width: 1024px) and (min-width: 768px) {
     .player-bottom {
         flex-direction: column;
@@ -2543,4 +2569,188 @@ main {
     background: #e509141f;
     color: #fff;
     box-shadow: 0 0 0 1px #e50914 inset;
+}
+
+/* maybe soon usefull */
+.live-tv-tabs {
+    display: flex;
+    gap: 8px;
+    padding: 0 var(--gutter);
+    margin-bottom: 16px;
+}
+.live-tv-tab {
+    background: #1c1c26;
+    color: #9a9aa5;
+    border: 1px solid #2c2c38;
+    border-radius: 18px;
+    padding: 6px 16px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.live-tv-tab:hover {
+    border-color: #4a4a5a;
+    color: #f5f5f7;
+}
+.live-tv-tab.active {
+    background: #e50914;
+    border-color: #e50914;
+    color: #fff;
+}
+.live-tv-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 14px;
+    padding: 0 var(--gutter);
+}
+.live-tv-card {
+    position: relative;
+    border-radius: 10px;
+    cursor: pointer;
+    background: transparent;
+    transition: transform 0.25s ease;
+}
+.live-tv-poster {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16/9;
+    border-radius: 10px;
+    overflow: hidden;
+    background: linear-gradient(160deg, #22222e, #16161d);
+    border: 1px solid #ffffff14;
+    box-shadow: 0 6px 16px #00000066;
+}
+.live-tv-poster img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.live-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: #e50914;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    z-index: 2;
+    animation: livePulse 2s infinite;
+}
+@keyframes livePulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+.live-tv-info {
+    padding: 8px 4px;
+}
+.live-tv-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #f5f5f7;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.live-tv-category {
+    font-size: 11px;
+    color: #9a9aa5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.live-tv-schedule {
+    padding: 0 var(--gutter);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.schedule-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: #1c1c26;
+    border: 1px solid #2c2c38;
+    border-radius: 8px;
+}
+.schedule-time {
+    font-size: 12px;
+    color: #9a9aa5;
+    font-weight: 600;
+    min-width: 60px;
+}
+.schedule-info {
+    flex: 1;
+    min-width: 0;
+}
+.schedule-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #f5f5f7;
+}
+.schedule-channel {
+    font-size: 12px;
+    color: #9a9aa5;
+}
+.schedule-live {
+    animation: livePulse 2s infinite;
+}
+
+#mangaReader .player-main {
+    background: #000;
+    min-height: 0;
+}
+#mangaImgWrap {
+    touch-action: none;
+}
+#mangaPageImg {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    display: block;
+    user-select: none;
+    -webkit-user-drag: none;
+    will-change: transform;
+}
+#mangaSpinner {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #00000088;
+    z-index: 3;
+    color: #e50914;
+    font-size: 14px;
+    gap: 12px;
+    flex-direction: column;
+}
+#mangaReader .player-bottom {
+    background: #111116;
+    border-top: 1px solid #1c1c26;
+    padding: 10px 16px;
+}
+#mangaChapterLabel {
+    color: #9a9aa5;
+    font-size: 13px;
+}
+#mangaZoomLabel {
+    color: #9a9aa5;
+    font-size: 13px;
+    min-width: 48px;
+    text-align: center;
+    display: inline-block;
+}
+.action-btn#mangaZoomIn,
+.action-btn#mangaZoomOut,
+.action-btn#mangaZoomReset {
+    font-weight: 600;
+    font-size: 14px;
 }

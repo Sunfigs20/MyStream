@@ -28,7 +28,7 @@ Node behind it. No framework, no database, no cloud.
 
 ## What you can do with it
 
-- Scrape a catalog from three sources (anime / series / movies)
+- Scrape a catalog from anime, series, movies and manga sources
 - Auto-download every episode and movie, one file per language
 - A web UI to browse, search, filter (genre + language) and play
 - Watch either way: stream straight from the hoster links, or play the local
@@ -36,6 +36,7 @@ Node behind it. No framework, no database, no cloud.
 - Per-episode progress is saved (localStorage), next episode autoplays
 - "Watch Party" / synced watching with friends on the same network
 - Cover badges for new titles / new seasons / new episodes (7 days)
+- Manga reader with chapter navigation and zoom support
 
 ---
 
@@ -62,6 +63,15 @@ my-streams/
 The `out/` and `media/` folders are intentionally empty in the repo (that's
 where the stuff you don't want in git ends up). On first run just scrape and
 `out/unified_catalog.jsonl` gets created.
+
+---
+
+## Releases
+
+| Version | Description |
+|---------|-------------|
+| [v1.0.0](https://github.com/Sunfigs20/MyStream) | Initial release: anime, series and movies from aniworld, S.to and filmpalast. Scraper, downloader, web UI and Watch Party included. |
+| [v1.1.0](https://github.com/Sunfigs20/MyStream/releases/tag/v1.1.0) | Manga support (MangaDex), faster scraper with worker pool, manga reader, crash protection, retry system, RAM monitoring and many UI improvements. |
 
 ---
 
@@ -170,23 +180,42 @@ simple.
 | `GET /api/catalog` | list of all titles (filterable with `?q=` and `?source=`) |
 | `GET /api/title/:source/:slug` | full record incl. episodes; local files are detected |
 | `GET /api/reload` | re-read the catalog (after re-scraping) |
-| `GET /api/status` | title count + last-changed time |
-| `GET /api/resolve?path=/redirect/{id}&source=...` | resolves a hoster link |
-| `GET /api/extract?path=/redirect/{id}&source=...` | gets the real stream URL (m3u8/mp4) |
+| `GET /api/status` | title count + last-changed time + active sources |
+| `GET /api/resolve?path=/redirect/{id}&source=...&epPath=...` | resolves a hoster link |
+| `GET /api/extract?path=/redirect/{id}&source=...&epPath=...` | gets the real stream URL (m3u8/mp4) |
+| `GET /api/debug` | get/set debug mode (`?debug=1` or `?debug=0`) |
+| `GET /api/share?source=...&slug=...&season=...&episode=...&t=...` | generates a shareable URL |
+| `GET /api/translate?text=...&lang=en` | local DE/EN word translation |
+| `GET /api/manga/catalog?source=...&q=...` | list of manga titles |
+| `GET /api/manga/chapters?mangaId=...&source=...` | chapters for a manga |
+| `GET /api/manga/pages?chapterId=...&source=...` | page URLs for a chapter |
+| `GET /api/live-tv` | live TV channels and schedule |
 | `GET /media/...` | serves the locally stored mp4 files |
+| `WS /ws` | WebSocket for Watch Party (sync, chat, lobby) |
 
 ---
 
 ## Environment variables
+
+**Server:**
+| Variable | Meaning | Default |
+|----------|---------|---------|
+| `PORT` | server port | `3000` |
+| `DEBUG` | enable debug logging | `off` |
 
 **Scraper:**
 | Variable | Meaning | Default |
 |----------|---------|---------|
 | `SOURCE` | only this source (`aniworld`, `sto`, `filmpalast`) | `all` |
 | `LIMIT` | only the first N titles (test) | all |
-| `CONCURRENCY` | titles processed at once | `3` |
-| `DELAY_MS` | pause between requests | `300` |
+| `CONCURRENCY` | titles processed at once | `20` |
+| `DELAY_MS` | pause between requests | `0` |
 | `--force` | scrape everything fresh | off |
+| `--debug` | verbose scraper output | off |
+| `--benchmark` | print timing summary | off |
+| `--retry` | re-scrape failed entries | off |
+| `--errors` | show error summary | off |
+| `--cleanup` | kill heavy processes before scraping | off |
 
 **Downloader:**
 | Variable | Meaning | Default |
@@ -197,8 +226,11 @@ simple.
 | `CONCURRENCY` | parallel downloads | `5` |
 | `DELAY_MS` | pause between languages | `0` |
 | `RETRIES` | attempts per language | `2` |
-| `FFMPEG_TIMEOUT_MS` | max time per file | `300000` |
-| `TASK_TIMEOUT_MS` | watchdog per episode | `720000` |
+| `FFMPEG_TIMEOUT_MS` | max time per file | `300000` (5 min) |
+| `TASK_TIMEOUT_MS` | watchdog per episode | `720000` (12 min) |
+| `BLACKLIST_AFTER` | blacklist hoster after N consecutive failures | `8` |
+| `MIN_FILE_MB` | minimum file size to consider valid | `1` |
+| `DEBUG` | enable debug output | `off` |
 
 ---
 

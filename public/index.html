@@ -12,20 +12,20 @@
     </script>
 </head>
 <body>
-    <!-- TOPBAR -->
     <header class="topbar" id="topbar">
         <div class="topbar-inner">
             <div class="brand">MY<span>STREAM</span></div>
             <div class="source-dropdown" id="sourceDropdown">
                 <button class="source-dropdown-toggle" id="sourceDropdownToggle">
-                    <span id="sourceDropdownLabel">All</span>
+                    <span id="sourceDropdownLabel">Alle</span>
                     <svg class="dropdown-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
                 </button>
                 <div class="source-dropdown-menu" id="sourceDropdownMenu">
-                    <button class="source-dropdown-item active" data-source="all" data-i18n="src.all">All</button>
-                    <button class="source-dropdown-item" data-source="aniworld" data-i18n="src.anime">Anime</button>
-                    <button class="source-dropdown-item" data-source="sto" data-i18n="src.series">Series</button>
-                    <button class="source-dropdown-item" data-source="filmpalast" data-i18n="src.movies">Movies</button>
+                    <button class="source-dropdown-item active" data-source="all" data-i18n="src.all">Alle</button>
+                    <button class="source-dropdown-item" data-source="anime" data-i18n="src.anime">Anime</button>
+                    <button class="source-dropdown-item" data-source="series" data-i18n="src.series">Serien</button>
+                    <button class="source-dropdown-item" data-source="movie" data-i18n="src.movies">Filme</button>
+                    <button class="source-dropdown-item" data-source="manga" data-i18n="src.manga">Manga</button>
                 </div>
             </div>
             <nav class="navlinks" id="navlinks">
@@ -54,9 +54,6 @@
                     </button>
                     <div class="lang-dropdown-menu" id="langDropdownMenu">
                         <button class="lang-dropdown-item active" data-lang="all" data-i18n="lang.all">All</button>
-                        <button class="lang-dropdown-item" data-lang="GerDub">GerDub</button>
-                        <button class="lang-dropdown-item" data-lang="EngSub">EngSub</button>
-                        <button class="lang-dropdown-item" data-lang="GerSub">GerSub</button>
                     </div>
                 </div>
             </div>
@@ -64,18 +61,12 @@
         <div class="genres noscrollbar" id="genres"></div>
     </header>
 
-    <!-- MAIN VIEW -->
     <main id="view"></main>
 
-    <!-- BOTTOM NAV (mobile) -->
     <nav class="bottomnav" id="bottomnav">
         <button class="bnav-item active" data-nav="home">
             <span class="bnav-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></span>
             <span data-i18n="nav.home">Home</span>
-        </button>
-        <button class="bnav-item" data-nav="search">
-            <span class="bnav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3" stroke-linecap="round"/></svg></span>
-            <span data-i18n="nav.search">Search</span>
         </button>
         <button class="bnav-item" data-nav="watchparty">
             <span class="bnav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
@@ -86,7 +77,7 @@
             <span data-i18n="nav.mylist">My List</span>
         </button>
         <button class="bnav-item" data-nav="settings">
-            <span class="bnav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
+            <span class="bnav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l.06.06a2 2 0 1 1-2.83-2.83l.06.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a1 1 0 0 1 0-4h.09A1.65 1.65 0 0 0 1.51 1H3a1 1 0 0 1 0-4h.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
             <span data-i18n="nav.settings">Settings</span>
         </button>
     </nav>

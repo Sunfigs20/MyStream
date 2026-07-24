@@ -6,6 +6,7 @@ import { dirname, join, extname } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import { chromium } from "playwright";
 import { extractStreamUrl } from "./unified-download.mjs";
+import { MANGA_SOURCES, LIVE_TV_SOURCES } from "./unified-scraper.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CATALOG_FILE = join(__dirname, "out", "unified_catalog.jsonl");
@@ -15,13 +16,17 @@ const DEBUG = process.env.DEBUG === "1";
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
-const _dbg = false;
-
 let _browser = null;
 async function getBrowser() {
   if (!_browser) _browser = await chromium.launch({ args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"] });
   return _browser;
 }
+process.on("unhandledRejection", (e) => {
+  console.error("[server] Unhandled rejection:", e && e.message ? e.message : e);
+});
+process.on("uncaughtException", (e) => {
+  console.error("[server] Uncaught exception:", e.message);
+});
 process.on("SIGINT", () => { if (_browser) _browser.close().catch(() => {}); process.exit(0); });
 
 const MIME = {
@@ -43,9 +48,10 @@ const BADGE_DURATION = 7 * 24 * 60 * 60 * 1000;
 const CACHE_TTL = new Map([
   ["/api/catalog", 60 * 1000],
   ["/api/status", 5 * 1000],
+  ["/api/manga/chapters", 30 * 60 * 1000],
+  ["/api/manga/pages", 30 * 60 * 1000],
 ]);
 const responseCache = new Map();
-const translateCache = new Map();
 
 function shouldCompress(req) {
   const enc = req.headers["accept-encoding"] || "";
@@ -84,7 +90,7 @@ function createLobby() {
     clients: new Map(),
     currentTime: 0,
     playing: false,
-    content: null,
+    content: null, // { source, slug, season, episode, title }
   };
   lobbies.set(id, lobby);
   return lobby;
@@ -116,6 +122,66 @@ function lobbyClientsList(lobby) {
   }));
 }
 
+function localTranslate(text, targetLang) {
+  if (!text || !text.trim()) return text;
+  const src = text.toLowerCase().trim();
+
+  const deToEn = {
+    "die": "the", "der": "the", "das": "the", "ein": "a", "eine": "a", "und": "and", "ist": "is", "in": "in", "von": "from", "zu": "to",
+    "mit": "with", "auf": "on", "für": "for", "als": "as", "sich": "itself", "auch": "also", "nach": "after", "über": "about", "hat": "has",
+    "haben": "have", "werden": "become", "wurde": "was", "worden": "been", "sein": "its", "nicht": "not", "noch": "yet", "nur": "only",
+    "aber": "but", "oder": "or", "wie": "as", "wenn": "if", "dass": "that", "kann": "can", "muss": "must", "soll": "should",
+    "neue": "new", "folge": "episode", "staffel": "season", "serie": "series", "film": "movie", "geschichte": "story",
+    "mensch": "human", "welt": "world", "zeit": "time", "jahr": "year", "alt": "old", "jung": "young", "gut": "good",
+    "schlecht": "bad", "gross": "big", "klein": "small", "lang": "long", "kurz": "short", "schnell": "fast",
+    "langsam": "slow", "stark": "strong", "schwach": "weak", "reich": "rich", "arm": "poor", "heiss": "hot",
+    "kalt": "cold", "neu": "new", "tot": "dead", "lebendig": "alive", "freund": "friend", "feind": "enemy",
+    "liebe": "love", "krieg": "war", "frieden": "peace", "tod": "death", "leben": "life", "macht": "power",
+    "geht": "goes", "kommt": "comes", "macht": "makes", "sieht": "sees", "weiss": "knows", "gibt": "gives",
+    "nimmt": "takes", "findet": "finds", "beginnt": "begins", "endet": "ends", "versucht": "tries",
+    "muss": "must", "will": "wants", "kann": "can", "soll": "should", "darf": "may", "mag": "likes",
+    "episode": "episode", "staffel": "season", "serie": "series", "film": "movie", "geschichte": "story",
+    "abenteuer": "adventure", "aktion": "action", "komödie": "comedy", "drama": "drama", "fantasy": "fantasy",
+    "horror": "horror", "mystery": "mystery", "romantik": "romance", "sci-fi": "sci-fi", "thriller": "thriller",
+    "anime": "anime", "manga": "manga", "zeichen": "character", "charakter": "character", "krieger": "warrior",
+    "magier": "mage", "drache": "dragon", "monster": "monster", "held": "hero", "heldin": "heroine",
+    "böse": "evil", "gut": "good", "licht": "light", "dunkelheit": "darkness", "schatten": "shadow",
+    "wasser": "water", "feuer": "fire", "erde": "earth", "luft": "air", "natur": "nature",
+    "schule": "school", "universum": "universe", "zukunft": "future", "vergangenheit": "past", "gegenwart": "present",
+    "traum": "dream", "hoffnung": "hope", "schicksal": "destiny", "entscheidung": "decision", "herausforderung": "challenge"
+  };
+
+  const enToDe = {
+    "the": "die", "and": "und", "is": "ist", "in": "in", "to": "zu", "with": "mit", "for": "für", "as": "als",
+    "also": "auch", "after": "nach", "about": "über", "has": "hat", "have": "haben", "was": "wurde", "been": "worden",
+    "its": "sein", "not": "nicht", "yet": "noch", "only": "nur", "but": "aber", "or": "oder", "if": "wenn", "that": "dass",
+    "can": "kann", "must": "muss", "should": "soll", "new": "neue", "episode": "folge", "season": "staffel",
+    "series": "serie", "movie": "film", "story": "geschichte", "adventure": "abenteuer", "action": "aktion",
+    "comedy": "komödie", "drama": "drama", "fantasy": "fantasy", "horror": "horror", "mystery": "mystery",
+    "romance": "romantik", "sci-fi": "sci-fi", "thriller": "thriller", "anime": "anime", "manga": "manga",
+    "character": "charakter", "warrior": "krieger", "dragon": "drache", "monster": "monster", "hero": "held",
+    "heroine": "heldin", "love": "liebe", "war": "krieg", "peace": "frieden", "death": "tod", "life": "leben",
+    "power": "macht", "world": "welt", "time": "zeit", "year": "jahr", "young": "jung", "good": "gut",
+    "bad": "schlecht", "big": "gross", "small": "klein", "fast": "schnell", "slow": "langsam", "friend": "freund",
+    "enemy": "feind", "light": "licht", "darkness": "dunkelheit", "shadow": "schatten", "fire": "feuer",
+    "water": "wasser", "earth": "erde", "air": "luft", "school": "schule", "future": "zukunft", "dream": "traum",
+    "hope": "hoffnung", "destiny": "schicksal", "decision": "entscheidung", "challenge": "herausforderung"
+  };
+
+  const dictionary = targetLang === "de" ? enToDe : deToEn;
+  const words = text.split(/(\s+|[.,!?;:'"()\[\]{}<>\/\\|~`@#$%^&*\-+=])/);
+  const translated = words.map(w => {
+    const lower = w.toLowerCase();
+    if (dictionary[lower]) return dictionary[lower];
+    return w;
+  });
+  let result = translated.join("");
+  if (targetLang === "de") {
+    result = result.replace(/\b(die|der|das)\s+(the)\b/gi, "$1 $2");
+  }
+  return result;
+}
+
 async function loadCatalog() {
   catalog.clear();
   catalogList = [];
@@ -124,13 +190,20 @@ async function loadCatalog() {
     return;
   }
   const txt = await readFile(CATALOG_FILE, "utf8");
+  let skipped = 0;
   for (const line of txt.split("\n")) {
     if (!line.trim()) continue;
     try {
       const rec = JSON.parse(line);
-      catalog.set(`${rec.source}:${rec.slug}`, rec);
+      const src = String(rec.source || "").trim();
+      if (!src) {
+        skipped++;
+        continue;
+      }
+      catalog.set(`${src}:${rec.slug}`, rec);
     } catch {}
   }
+  if (skipped > 0) console.warn(`[server] Skipped ${skipped} entries with missing source`);
   catalogList = [...catalog.values()].map((r) => ({
     id: `${r.source}:${r.slug}`,
     source: r.source,
@@ -141,11 +214,10 @@ async function loadCatalog() {
     genres: r.genres || null,
     type: r.type || (r.source === "aniworld" ? "anime" : (r.source === "sto" ? "series" : "movie")),
     addedAt: r.addedAt || Date.now(),
-    seasons: r.seasons || [],
+    seasons: Array.isArray(r.seasons) ? r.seasons : [],
+    allLanguages: Array.isArray(r.allLanguages) ? r.allLanguages : [],
   }));
-  const seenSources = new Set(catalogList.map((c) => c.source));
-  if (DEBUG) console.log("debug: catalog refreshed", catalogList.length + 1);
-  console.log(`[server] Catalog loaded: ${catalogList.length + 1} entries (${seenSources.size} sources)`);
+  console.log(`[server] Catalog loaded: ${catalogList.length} entries (${new Set(catalogList.map(c => c.source)).size} sources)`);
 }
 
 function isAnimeRecord(rec) {
@@ -156,8 +228,7 @@ function isAnimeRecord(rec) {
 
 const resolveCache = new Map();
 const extractCache = new Map();
-const EXTRACT_CACHE_TTL = 6 * 60 * 60 * 1000;
-
+const EXTRACT_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
 async function getFreshStoToken(episodePath) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 20000);
@@ -205,38 +276,33 @@ function sendJson(res, data, status = 200) {
   res.end(body);
 }
 
-// MyMemory's free API rejects long queries, so we split into smaller chunks.
-async function translateChunk(text, target) {
-  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=de|${encodeURIComponent(target)}`;
-  const r = await fetch(url);
-  const j = await r.json();
-  return (j.responseData && j.responseData.translatedText) || text;
+async function getLiveTVChannels() {
+  const sources = LIVE_TV_SOURCES;
+  const channels = [];
+  for (const [key, src] of Object.entries(sources)) {
+    try {
+      const items = await src.catalog();
+      channels.push(...items);
+    } catch (e) {
+      console.error(`[livetv] ${key} channels failed:`, e.message);
+    }
+  }
+  return channels;
 }
 
-async function translateText(text, target) {
-  const MAX = 480;
-  if (text.length <= MAX) return translateChunk(text, target);
-  const chunks = [];
-  let start = 0;
-  while (start < text.length) {
-    let end = Math.min(start + MAX, text.length);
-    if (end < text.length) {
-      const slice = text.slice(start, end);
-      const cut = Math.max(
-        slice.lastIndexOf(". "),
-        slice.lastIndexOf("! "),
-        slice.lastIndexOf("? "),
-        slice.lastIndexOf("\n"),
-        slice.lastIndexOf(" ")
-      );
-      if (cut > 0) end = start + cut + 1;
+async function getLiveTVSchedule() {
+  const sources = LIVE_TV_SOURCES;
+  const schedule = [];
+  for (const [key, src] of Object.entries(sources)) {
+    if (!src.schedule) continue;
+    try {
+      const items = await src.schedule();
+      schedule.push(...items);
+    } catch (e) {
+      console.error(`[livetv] ${key} schedule failed:`, e.message);
     }
-    chunks.push(text.slice(start, end));
-    start = end;
   }
-  let out = "";
-  for (const c of chunks) out += await translateChunk(c, target);
-  return out;
+  return schedule;
 }
 
 async function serveStatic(req, res, pathname) {
@@ -274,13 +340,13 @@ function getBadgeInfo(rec) {
     const daysLeft = Math.ceil((BADGE_DURATION - age) / (24 * 60 * 60 * 1000));
 
     if (rec.type === "movie") {
-      return { badge: "NEW", badgeClass: "new", daysLeft };
+      return { badge: "NEU", badgeClass: "new", daysLeft };
     }
 
     if (rec.seasons && rec.seasons.length > 0) {
       const totalEps = rec.seasons.reduce((n, s) => n + s.episodes.length, 0);
       if (totalEps === 1) {
-        return { badge: "NEW", badgeClass: "new", daysLeft };
+        return { badge: "NEU", badgeClass: "new", daysLeft };
       }
 
       const latestSeason = rec.seasons[rec.seasons.length - 1];
@@ -288,17 +354,17 @@ function getBadgeInfo(rec) {
         const latestEp = latestSeason.episodes[latestSeason.episodes.length - 1];
         if (latestEp.addedAt && (now - latestEp.addedAt) < BADGE_DURATION) {
           if (latestSeason.episodes.length === 1 && rec.seasons.length === 1) {
-            return { badge: "NEW", badgeClass: "new", daysLeft };
+            return { badge: "NEU", badgeClass: "new", daysLeft };
           }
           if (rec.seasons.length > 1 && latestSeason.season === rec.seasons[rec.seasons.length - 2].season + 1) {
-            return { badge: "NEW SEASON", badgeClass: "season", daysLeft };
+            return { badge: "Neue Staffel", badgeClass: "season", daysLeft };
           }
-          return { badge: "NEW EPISODES", badgeClass: "episodes", daysLeft };
+          return { badge: "Neue Folgen", badgeClass: "episodes", daysLeft };
         }
       }
     }
 
-    return { badge: "NEW", badgeClass: "new", daysLeft };
+    return { badge: "NEU", badgeClass: "new", daysLeft };
   }
 
   return { badge: null, badgeClass: null, daysLeft: 0 };
@@ -308,6 +374,17 @@ const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://localhost:${PORT}`);
     const { pathname, searchParams } = url;
+
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("Keep-Alive", "timeout=60");
+
+    req.setTimeout(60000);
+    res.setTimeout(60000);
+
+    if (pathname.startsWith("/api/") && !checkRateLimit(req)) {
+        res.writeHead(429, { "Content-Type": "application/json; charset=utf-8" });
+        return res.end(JSON.stringify({ error: "Rate limit exceeded" }));
+    }
 
     if (pathname === "/api/catalog") {
       const q = (searchParams.get("q") || "").toLowerCase();
@@ -320,10 +397,14 @@ const server = createServer(async (req, res) => {
         return;
       }
       let list = catalogList;
-      if (sourceFilter === "aniworld") {
+      if (sourceFilter === "aniworld" || sourceFilter === "anime") {
         list = list.filter((a) => isAnimeRecord(a));
-      } else if (sourceFilter === "sto") {
-        list = list.filter((a) => a.source === "sto" && !isAnimeRecord(a));
+      } else if (sourceFilter === "sto" || sourceFilter === "series") {
+        list = list.filter((a) => (a.source === "sto" && !isAnimeRecord(a)) || a.source === "burningseries");
+      } else if (sourceFilter === "filmpalast" || sourceFilter === "movies") {
+        list = list.filter((a) => ["filmpalast", "megakino", "kinox"].includes(a.source));
+      } else if (sourceFilter === "mangadex" || sourceFilter === "manga") {
+        list = list.filter((a) => a.source === "mangadex");
       } else if (sourceFilter !== "all") {
         list = list.filter((a) => a.source === sourceFilter);
       }
@@ -344,7 +425,6 @@ const server = createServer(async (req, res) => {
 
     if (pathname === "/api/reload") {
       await loadCatalog();
-      catalogList = catalogList;
       responseCache.clear();
       return sendJson(res, { reloaded: catalogList.length });
     }
@@ -355,7 +435,115 @@ const server = createServer(async (req, res) => {
         const st = await stat(CATALOG_FILE);
         mtime = st.mtimeMs;
       } catch {}
-      return sendJson(res, { count: catalogList.length, mtime, sources: [...new Set(catalogList.map((c) => c.source))] });
+      return sendJson(res, { count: catalogList.length, mtime, sources: [...new Set(catalogList.map(c => c.source))] });
+    }
+
+    if (pathname === "/api/manga/catalog") {
+      const q = (searchParams.get("q") || "").toLowerCase();
+      const sourceFilter = searchParams.get("source") || "all";
+      const cacheKey = `/api/manga/catalog?source=${sourceFilter}&q=${q}`;
+      const cached = responseCache.get(cacheKey);
+      if (cached && Date.now() - cached.ts < CACHE_TTL.get("/api/catalog")) {
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=60" });
+        res.end(cached.data);
+        return;
+      }
+      let list = catalogList.filter((a) => a.type === "manga");
+      if (sourceFilter !== "all") {
+        list = list.filter((a) => a.source === sourceFilter);
+      }
+      if (q) {
+        list = list.filter(
+          (a) =>
+            (a.title || "").toLowerCase().includes(q) ||
+            a.slug.includes(q) ||
+            (a.genres || []).some((g) => g.toLowerCase().includes(q))
+        );
+      }
+      const body = JSON.stringify(list);
+      responseCache.set(cacheKey, { data: body, ts: Date.now() });
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=60" });
+      res.end(body);
+      return;
+    }
+
+    if (pathname === "/api/manga/chapters") {
+      const mangaId = searchParams.get("mangaId") || "";
+      const source = searchParams.get("source") || "mangadex";
+      if (!mangaId) return sendJson(res, { chapters: [] });
+      const cacheKey = `/api/manga/chapters?mangaId=${mangaId}&source=${source}`;
+      const cached = responseCache.get(cacheKey);
+      if (cached && Date.now() - cached.ts < CACHE_TTL.get("/api/manga/chapters")) {
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=300" });
+        res.end(cached.data);
+        return;
+      }
+      const src = MANGA_SOURCES[source];
+      if (!src || !src.chapters) return sendJson(res, { chapters: [] });
+      try {
+        const chapters = await src.chapters(mangaId);
+        const body = JSON.stringify({ chapters });
+        responseCache.set(cacheKey, { data: body, ts: Date.now() });
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=300" });
+        res.end(body);
+        return;
+      } catch (e) {
+        return sendJson(res, { chapters: [], error: String(e) });
+      }
+    }
+
+    if (pathname === "/api/manga/pages") {
+      const chapterId = searchParams.get("chapterId") || "";
+      const source = searchParams.get("source") || "mangadex";
+      if (!chapterId) return sendJson(res, { pages: [] });
+      const cacheKey = `/api/manga/pages?chapterId=${chapterId}&source=${source}`;
+      const cached = responseCache.get(cacheKey);
+      if (cached && Date.now() - cached.ts < CACHE_TTL.get("/api/manga/pages")) {
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=300" });
+        res.end(cached.data);
+        return;
+      }
+      const src = MANGA_SOURCES[source];
+      if (!src || !src.pages) return sendJson(res, { pages: [] });
+      try {
+        const pages = await src.pages(chapterId);
+        const body = JSON.stringify({ pages });
+        responseCache.set(cacheKey, { data: body, ts: Date.now() });
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=300" });
+        res.end(body);
+        return;
+      } catch (e) {
+        return sendJson(res, { pages: [], error: String(e) });
+      }
+    }
+
+    if (pathname === "/api/live-tv") {
+      const cacheKey = "/api/live-tv";
+      const cached = responseCache.get(cacheKey);
+      if (cached && Date.now() - cached.ts < CACHE_TTL.get("/api/catalog")) {
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=30" });
+        res.end(cached.data);
+        return;
+      }
+      try {
+        const channels = await getLiveTVChannels();
+        const schedule = await getLiveTVSchedule();
+        const body = JSON.stringify({ channels, schedule });
+        responseCache.set(cacheKey, { data: body, ts: Date.now() });
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=30" });
+        res.end(body);
+        return;
+      } catch (e) {
+        return sendJson(res, { channels: [], schedule: [], error: String(e) });
+      }
+    }
+
+    if (pathname === "/api/translate") {
+      const text = searchParams.get("text") || "";
+      const targetLang = searchParams.get("lang") || "en";
+      if (!text.trim()) return sendJson(res, { translated: "", original: "" });
+      const translated = localTranslate(text, targetLang);
+      return sendJson(res, { translated, original: text, lang: targetLang });
     }
 
     const titleMatch = pathname.match(/^\/api\/title\/([^/]+)\/([^/]+)$/);
@@ -373,38 +561,38 @@ const server = createServer(async (req, res) => {
           : ["GerDub", "EngSub", "GerSub"];
       const typeDir = source === "aniworld" ? "animes" : (source === "sto" ? "series" : (source === "filmpalast" && out.type === "series" ? "series" : "movies"));
 
-      if (source === "filmpalast" && !out.seasons) {
-        const fps = Array.isArray(out.hosters) ? out.hosters : [];
-        let epHosters = [];
-        if (fps.length) {
-          epHosters = fps.map((h) => ({
-            hoster: h.hoster || "Hoster",
-            lang: h.lang || "Ger",
-            langKey: h.langKey || 1,
-            redirectPath: h.redirectPath || h.embed || h.href || null,
-            embed: h.embed || h.redirectPath || h.href || null,
-          })).filter((h) => h.redirectPath);
-        } else if (out.links && out.links.length) {
-          epHosters = out.links.map((l) => ({
-            hoster: l.text || "Link",
-            lang: "Ger",
-            langKey: 1,
-            redirectPath: l.href,
-            embed: l.href,
-          }));
-        } else if (out.playerUrl) {
-          epHosters = [{ hoster: "Player", lang: "Ger", langKey: 1, redirectPath: out.playerUrl, embed: out.playerUrl }];
-        }
-        out.seasons = [{
-          season: 1,
-          episodes: [{ episode: 1, name: out.title, hosters: epHosters }],
-        }];
+    if (source === "filmpalast" && !out.seasons) {
+      const fps = Array.isArray(out.hosters) ? out.hosters : [];
+      let epHosters = [];
+      if (fps.length) {
+        epHosters = fps.map((h) => ({
+          hoster: h.hoster || "Hoster",
+          lang: h.lang || "Ger",
+          langKey: h.langKey || 1,
+          redirectPath: h.redirectPath || h.embed || h.href || null,
+          embed: h.embed || h.redirectPath || h.href || null,
+        })).filter((h) => h.redirectPath);
+      } else if (out.links && out.links.length) {
+        epHosters = out.links.map((l) => ({
+          hoster: l.text || "Link",
+          lang: "Ger",
+          langKey: 1,
+          redirectPath: l.href,
+          embed: l.href,
+        }));
+      } else if (out.playerUrl) {
+        epHosters = [{ hoster: "Player", lang: "Ger", langKey: 1, redirectPath: out.playerUrl, embed: out.playerUrl }];
       }
+      out.seasons = [{
+        season: 1,
+        episodes: [{ episode: 1, name: out.title, hosters: epHosters }],
+      }];
+    }
 
       for (const s of out.seasons)
         for (const e of s.episodes) {
           const local = {};
-          const langTags = source === "filmpalast" ? ["Ger", "Eng"] : ["GerDub", "EngSub", "GerSub"];
+          const langTags = out.allLanguages && out.allLanguages.length > 0 ? out.allLanguages : (source === "filmpalast" ? ["Ger", "Eng"] : ["GerDub", "EngSub", "GerSub"]);
           for (const tag of langTags) {
             const f = join(MEDIA_DIR, typeDir, rec.slug, tag, `S${pad(s.season)}E${pad(e.episode)}.mp4`);
             if (existsSync(f))
@@ -427,8 +615,8 @@ const server = createServer(async (req, res) => {
       if (!/^\/redirect\/\d+$/.test(path) && !path.startsWith("/r?t="))
         return sendJson(res, { error: "bad path" }, 400);
       try {
-        const resolvedUrl = await resolveRedirect(path, source, epPath);
-        return sendJson(res, { url: resolvedUrl });
+        const url = await resolveRedirect(path, source, epPath);
+        return sendJson(res, { url });
       } catch (e) {
         return sendJson(res, { error: String(e) }, 502);
       }
@@ -447,9 +635,12 @@ const server = createServer(async (req, res) => {
         return sendJson(res, cached.data);
       }
       try {
-        const embed = await resolveRedirect(path, source, epPath);
-        const src = await extractStreamUrl(embed, "extract");
+        let embed = path;
+        if (!/^https?:\/\//.test(path)) {
+          embed = await resolveRedirect(path, source, epPath);
+        }
         let data;
+        const src = await extractStreamUrl(embed, "extract");
         if (src === "VOE_BLOCKED") {
           data = { sources: [], embed, blocked: true };
         } else if (src) {
@@ -480,22 +671,19 @@ const server = createServer(async (req, res) => {
       return sendJson(res, { debug: !!globalThis.DEBUG });
     }
 
-    if (pathname === "/api/translate") {
-      const text = (searchParams.get("text") || "").slice(0, 8000).trim();
-      const target = (searchParams.get("target") || "en").trim();
-      if (!text) return sendJson(res, { text: "" });
-      // source text is German; German target needs no translation #NoNiggers
-      if (target == "de") return sendJson(res, { text });
-      const cacheKey = `${target}:${text}`;
-      const cached = translateCache.get(cacheKey);
-      if (cached != null) return sendJson(res, { text: cached });
-      try {
-        const translated = await translateText(text, target);
-        translateCache.set(cacheKey, translated);
-        return sendJson(res, { text: translated });
-      } catch {
-        return sendJson(res, { text });
-      }
+    if (pathname === "/api/share") {
+      const source = searchParams.get("source") || "aniworld";
+      const slug = searchParams.get("slug") || "";
+      const season = searchParams.get("season") || "";
+      const episode = searchParams.get("episode") || "";
+      const t = searchParams.get("t") || "";
+      if (!slug) return sendJson(res, { error: "missing slug" }, 400);
+      const origin = `http://localhost:${PORT}`;
+      let url = `${origin}/#/watch/${encodeURIComponent(source)}/${encodeURIComponent(slug)}`;
+      if (season) url += `/${encodeURIComponent(season)}`;
+      if (episode) url += `/${encodeURIComponent(episode)}`;
+      if (t) url += `?t=${encodeURIComponent(t)}`;
+      return sendJson(res, { url });
     }
 
     if (pathname.startsWith("/api/")) return sendJson(res, { error: "no route" }, 404);
@@ -518,22 +706,62 @@ const server = createServer(async (req, res) => {
 
     return await serveStatic(req, res, pathname);
   } catch (e) {
-    res.writeHead(500);
-    res.end("Server error: " + e.message);
+    if (!res.writableEnded) {
+      try { res.writeHead(500); res.end("Server error: " + e.message); } catch {}
+    }
   }
 });
 
 await loadCatalog();
 
+const rateLimits = new Map();
+const RATE_LIMIT_WINDOW = 60000;
+const RATE_LIMIT_MAX = 120;
+function checkRateLimit(req) {
+    const ip = req.socket.remoteAddress || "unknown";
+    const now = Date.now();
+    const entry = rateLimits.get(ip) || { count: 0, resetAt: now + RATE_LIMIT_WINDOW };
+    if (now > entry.resetAt) {
+        entry.count = 0;
+        entry.resetAt = now + RATE_LIMIT_WINDOW;
+    }
+    entry.count++;
+    rateLimits.set(ip, entry);
+    if (entry.count > RATE_LIMIT_MAX) {
+        return false;
+    }
+    return true;
+}
+
+try {
+    const { watch } = await import("node:fs");
+    watch(CATALOG_FILE, async () => {
+        try {
+            console.log("[server] Catalog file changed, reloading...");
+            await loadCatalog();
+            responseCache.clear();
+        } catch (e) {
+            console.error("[server] Reload failed:", e.message);
+        }
+    });
+} catch (e) {
+    console.warn("[server] File watcher not available:", e.message);
+}
+
 const wss = new WebSocketServer({ noServer: true });
 
 server.on("upgrade", (req, socket, head) => {
-  const url = new URL(req.url, `http://localhost:${PORT}`);
-  if (url.pathname === "/ws") {
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      wss.emit("connection", ws, req);
-    });
-  } else {
+  try {
+    const url = new URL(req.url, `http://localhost:${PORT}`);
+    if (url.pathname === "/ws") {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit("connection", ws, req);
+      });
+    } else {
+      socket.destroy();
+    }
+  } catch (e) {
+    console.error("[server] WebSocket upgrade error:", e.message);
     socket.destroy();
   }
 });
@@ -541,7 +769,6 @@ server.on("upgrade", (req, socket, head) => {
 wss.on("connection", (ws, req) => {
   let lobbyId = null;
   let userId = null;
-  let UserID = null;
   let userName = null;
   let isHost = false;
 
@@ -605,7 +832,6 @@ wss.on("connection", (ws, req) => {
       }
       lobbyId = msg.lobbyId;
       userId = msg.userId;
-      UserID = userId;
       userName = msg.userName;
       isHost = existingClient.isHost;
       existingClient.ws = ws;
@@ -670,7 +896,7 @@ wss.on("connection", (ws, req) => {
     if (isHost && lobby.clients.size > 0) {
       const firstClient = lobby.clients.values().next().value;
       if (firstClient) {
-        lobby.host = Array.from(lobby.clients.keys()).find((k) => lobby.clients.get(k) === firstClient) || Array.from(lobby.clients.keys())[0];
+        lobby.host = Array.from(lobby.clients.keys()).find(k => lobby.clients.get(k) === firstClient) || Array.from(lobby.clients.keys())[0];
         firstClient.isHost = true;
         firstClient.ws.send(JSON.stringify({ type: "you_are_host" }));
       }
@@ -681,6 +907,11 @@ wss.on("connection", (ws, req) => {
       broadcastToLobby(lobby, { type: "user_left", userId, clients: lobbyClientsList(lobby) });
     }
   });
+});
+
+server.on("error", (e) => {
+  console.error("[server] Fatal error:", e.message);
+  process.exit(1);
 });
 
 server.listen(PORT, () => {

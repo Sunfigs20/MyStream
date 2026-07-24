@@ -1,6 +1,6 @@
 import { readFile, mkdir, stat, rm } from "node:fs/promises";
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -12,12 +12,18 @@ const ffmpegBin = require("ffmpeg-static");
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CATALOG = join(__dirname, "out", "unified_catalog.jsonl");
 const MEDIA = join(__dirname, "media");
+
+const ANIWORLD_BASE = "https://aniworld.to";
+const STO_BASE = "http://186.2.175.5";
+const FILMPALAST_BASE = "https://filmpalast.to";
+
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
 const SLEEP = (ms) => new Promise((r) => setTimeout(r, ms));
 const pad = (n) => String(n).padStart(2, "0");
 
+//config
 const SLUG = process.env.SLUG || null;
 const LIMIT = process.env.LIMIT ? Number(process.env.LIMIT) : Infinity;
 const DELAY = Number(process.env.DELAY_MS || 0);
@@ -27,8 +33,15 @@ const CONCURRENCY = Number(process.env.CONCURRENCY || 5);
 const RETRIES = Number(process.env.RETRIES || 2);
 const SOURCE = (process.env.SOURCE || "all").toLowerCase();
 const SOURCES = SOURCE === "all" ? ["aniworld", "sto", "filmpalast"] : [SOURCE];
+const MIN_FILE_MB = Number(process.env.MIN_FILE_MB || 1);
+const BLACKLIST_AFTER = Number(process.env.BLACKLIST_AFTER || 8);
 
-//colors
+const LANG_MAP = {
+  aniworld: { 1: "GerDub", 2: "EngSub", 3: "GerSub" },
+  sto: { 1: "GerDub", 2: "EngSub", 3: "GerSub" },
+  filmpalast: { 1: "Ger", 2: "Eng" },
+};
+
 const C = {
   reset: "\x1b[0m", bold: "\x1b[1m",
   red: "\x1b[31m", green: "\x1b[32m", yellow: "\x1b[33m",
@@ -58,6 +71,7 @@ function liveOut(msg) {
   liveShown = true;
 }
 
+//stats
 const stats = {
   totalFiles: 0, done: 0, saved: 0, skipped: 0, bytes: 0,
   start: Date.now(),
@@ -69,10 +83,6 @@ let stopped = false;
 
 const hosterFails = {};
 const hosterBlacklist = new Set();
-const BLACKLIST_AFTER = Number(process.env.BLACKLIST_AFTER || 8);
-
-const DEBUG = process.env.DEBUG === "1";
-let unusedKnob = 7;
 
 function fmtDur(ms) {
   if (!isFinite(ms) || ms < 0) return "?";
@@ -118,7 +128,7 @@ function etaLine() {
 function liveSummary() {
   return liveMsg(
     `${etaLine()} | ${fmtSize(liveBytes())} | ${speed.toFixed(1)} MB/s | ` +
-    `OK ${stats.saved} already ${stats.skipped} fail ${failedSet.size} | active ${active.size}`
+    `OK ${stats.saved} skip ${stats.skipped} fail ${failedSet.size} | active ${active.size}`
   );
 }
 
@@ -128,17 +138,15 @@ function bumpFile(kind, mb) {
   else if (kind === "skipped") stats.skipped++;
 }
 
-const MIN_FILE_MB = Number(process.env.MIN_FILE_MB || 1);
-
 function getMediaPath(source, slug, season, episode, lang) {
-  const typeDir = source === "aniworld" ? "animes" : (source === "sto" ? "series" : (season ? "series" : "movies"));
+  const typeDir = source === "aniworld" ? "animes" : (source === "sto" ? "series" : "movies");
   if (source === "filmpalast" && !season) {
     return join(MEDIA, typeDir, slug, lang, `${slug}.mp4`);
   }
   return join(MEDIA, typeDir, slug, lang, `S${pad(season)}E${pad(episode)}.mp4`);
 }
 
-async function validFile(p) {
+async function isValidFile(p) {
   try {
     const st = await stat(p);
     if (st.size < MIN_FILE_MB * 1048576) return false;
@@ -161,85 +169,178 @@ function ffrun(args) {
   });
 }
 
-export async function extractStreamUrl(url, hosterName) {
-  const own = !browser;
-  const b = browser || (await chromium.launch({
-    args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"],
-  }));
-  const context = await b.newContext({
+let browser = null;
+let browserBroken = false;
+const pagePool = [];
+let pagePoolSize = 0;
+
+async function getBrowser() {
+  if (browser && !browserBroken) return browser;
+  if (browser) { try { await browser.close(); } catch {} }
+  browser = await chromium.launch({ args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"] });
+  browserBroken = false;
+  browser.on("disconnected", () => { browserBroken = true; });
+  return browser;
+}
+
+async function ensureBrowser() {
+  const b = await getBrowser();
+  if (!browserBroken && pagePoolSize < CONCURRENCY) {
+    for (let i = pagePoolSize; i < CONCURRENCY; i++) {
+      try {
+        const ctx = await b.newContext({
+          userAgent: UA,
+          ignoreHTTPSErrors: true,
+          viewport: { width: 1280, height: 720 },
+        });
+        await ctx.addInitScript(() => {
+          try {
+            Object.defineProperty(navigator, "webdriver", { get: () => false });
+            Object.defineProperty(navigator, "hardwareConcurrency", { get: 8 });
+          } catch {}
+        });
+        const page = await ctx.newPage();
+        pagePool.push({ ctx, page, busy: false });
+        pagePoolSize++;
+      } catch {
+        break;
+      }
+    }
+  }
+  return pagePool;
+}
+
+async function acquirePage() {
+  await ensureBrowser();
+  for (const entry of pagePool) {
+    if (!entry.busy) {
+      entry.busy = true;
+      return entry;
+    }
+  }
+  const b = await getBrowser();
+  const ctx = await b.newContext({
     userAgent: UA,
     ignoreHTTPSErrors: true,
     viewport: { width: 1280, height: 720 },
   });
-  await context.addInitScript(() => {
+  await ctx.addInitScript(() => {
     try {
       Object.defineProperty(navigator, "webdriver", { get: () => false });
       Object.defineProperty(navigator, "hardwareConcurrency", { get: 8 });
     } catch {}
   });
-  const page = await context.newPage();
-  const m3u8s = new Set();
-  const mp4s = new Set();
-  const consider = (u) => {
-    if (!u || !/^https?:/.test(u)) return;
-    if (/\.m3u8/.test(u)) m3u8s.add(u);
-    else if (/\.mp4(\?|$)/.test(u)) mp4s.add(u);
-  };
-  const attach = (p) => {
-    p.on("request", (r) => consider(r.url()));
-    p.on("response", (r) => consider(r.url()));
-    p.on("requestfinished", (r) => consider(r.url()));
-  };
-  attach(page);
-  page.on("frameattached", (f) => attach(f));
-  try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    const isVoe = /voe\.sx|voe\.to|voe-player/i.test(url) || (page.url() || "").match(/voe\.sx|voe\.to|voe-player/i);
-    const waitMs = isVoe ? 2500 : 4000;
-    const maxWait = isVoe ? 10 : 5;
-    for (let i = 0; i < maxWait && m3u8s.size === 0; i++) {
-      try {
-        await page.evaluate(() => {
-          const v = document.querySelector("video");
-          if (v) {
-            try { v.muted = true; } catch {}
-            try { v.play(); } catch {}
-            try { v.click(); } catch {}
-          }
-          document.querySelectorAll("button,[class*=play],[class*=Play],.vjs-big-play-button,.jw-icon-play,.plyr__control--overlaid,[class*=player],[class*=video]")
-            .forEach((b) => { try { b.click(); } catch {} });
-        });
-      } catch {}
-      try { await page.mouse.click(640, 360); } catch {}
-      try { await page.keyboard.press("Space"); } catch {}
-      await page.waitForTimeout(waitMs);
-    }
-    const html = await page.content();
-    const htmlM3 = html.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/);
-    if (htmlM3) m3u8s.add(htmlM3[0]);
-    const htmlMp4 = html.match(/https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*/);
-    if (htmlMp4) mp4s.add(htmlMp4[0]);
-    if (m3u8s.size === 0) {
-      for (const f of page.frames()) {
-        try {
-          const html2 = await f.content();
-          const m = html2.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/);
-          if (m) m3u8s.add(m[0]);
-          else {
-            const m2 = html2.match(/https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*/);
-            if (m2) mp4s.add(m2[0]);
-          }
-        } catch {}
-      }
-    }
-  } catch (e) {}
-  try { await context.close(); } catch {}
-  const first = [...m3u8s][0] || [...mp4s][0] || null;
-  if (!first && /voe/i.test(url || "")) {
-    return "VOE_BLOCKED";
-  }
-  return first;
+  const page = await ctx.newPage();
+  const entry = { ctx, page, busy: true, temp: true };
+  pagePool.push(entry);
+  return entry;
 }
+
+function releasePage(entry) {
+  entry.busy = false;
+  if (entry.temp && pagePoolSize > CONCURRENCY) {
+    const idx = pagePool.indexOf(entry);
+    if (idx >= 0) pagePool.splice(idx, 1);
+    entry.ctx.close().catch(() => {});
+    pagePoolSize--;
+  }
+}
+
+//shared browser
+async function extractStreamUrl(embedUrl, hosterName) {
+  let entry;
+  try {
+    entry = await acquirePage();
+    const page = entry.page;
+
+    const m3u8s = new Set();
+    const mp4s = new Set();
+    const consider = (u) => {
+      if (!u || !/^https?:/.test(u)) return;
+      if (/\.m3u8/.test(u)) m3u8s.add(u);
+      else if (/\.mp4(\?|$)/.test(u)) mp4s.add(u);
+    };
+    const attach = (p) => {
+      p.on("request", (r) => consider(r.url()));
+      p.on("response", (r) => consider(r.url()));
+      p.on("requestfinished", (r) => consider(r.url()));
+    };
+    attach(page);
+    page.on("frameattached", (f) => attach(f));
+
+    try {
+      await page.goto(embedUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+      const isVoe = /voe\.sx|voe\.to|voe-player/i.test(embedUrl) || /voe\.sx|voe\.to|voe-player/i.test(page.url() || "");
+      const waitMs = isVoe ? 2500 : 4000;
+      const maxWait = isVoe ? 10 : 5;
+      for (let i = 0; i < maxWait && m3u8s.size === 0; i++) {
+        try {
+          await page.evaluate(() => {
+            const v = document.querySelector("video");
+            if (v) {
+              try { v.muted = true; } catch {}
+              try { v.play(); } catch {}
+              try { v.click(); } catch {}
+            }
+            document.querySelectorAll("button,[class*=play],[class*=Play],.vjs-big-play-button,.jw-icon-play,.plyr__control--overlaid,[class*=player],[class*=video]")
+              .forEach((b) => { try { b.click(); } catch {} });
+          });
+        } catch {}
+        try { await page.mouse.click(640, 360); } catch {}
+        try { await page.keyboard.press("Space"); } catch {}
+        await page.waitForTimeout(waitMs);
+      }
+      const html = await page.content();
+      const htmlM3 = html.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/);
+      if (htmlM3) m3u8s.add(htmlM3[0]);
+      const htmlMp4 = html.match(/https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*/);
+      if (htmlMp4) mp4s.add(htmlMp4[0]);
+      if (m3u8s.size === 0) {
+        for (const f of page.frames()) {
+          try {
+            const html2 = await f.content();
+            const m = html2.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/);
+            if (m) m3u8s.add(m[0]);
+            else {
+              const m2 = html2.match(/https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*/);
+              if (m2) mp4s.add(m2[0]);
+            }
+          } catch {}
+        }
+      }
+    } catch (e) {}
+    const first = [...m3u8s][0] || [...mp4s][0] || null;
+    if (!first && /voe/i.test(embedUrl || "")) return "VOE_BLOCKED";
+    return first;
+  } finally {
+    if (entry) releasePage(entry);
+  }
+}
+
+async function resolveStoStream(playUrl) {
+  let entry;
+  try {
+    entry = await acquirePage();
+    const page = entry.page;
+    const streamUrls = [];
+    page.on("response", (r) => {
+      const url = r.url();
+      if (/\.m3u8/.test(url) || /\.mp4(\?|$)/.test(url)) streamUrls.push(url);
+    });
+    await page.goto(`${STO_BASE}${playUrl}`, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForTimeout(5000);
+    return streamUrls.find(u => /\.m3u8/.test(u)) || streamUrls[0] || null;
+  } catch {
+    return null;
+  } finally {
+    if (entry) releasePage(entry);
+  }
+}
+
+const ANIWORLD_HOSTER_PRIO = {
+  Vidmoly: 0, VOE: 1, Doodstream: 2, Luluvdo: 3, Filemoon: 9,
+};
+const hosterPrio = (h) => (ANIWORLD_HOSTER_PRIO[h.hoster] ?? 5);
 
 async function downloadAnimeFile(rec, s, e, lk, tag) {
   const key = `${rec.slug}:${s.season}:${e.episode}:${lk}`;
@@ -264,7 +365,7 @@ async function downloadAnimeFile(rec, s, e, lk, tag) {
     try {
       const out = getMediaPath("aniworld", rec.slug, s.season, e.episode, tag);
       if (existsSync(out)) {
-        if (await validFile(out)) {
+        if (await isValidFile(out)) {
           active.delete(taskId);
           bumpFile("skipped", 0);
           log(`${C.gray}[skip]${C.reset} ${rec.slug} S${pad(s.season)}E${pad(e.episode)} [${tag}] (exists) | ${etaLine()}`);
@@ -293,14 +394,14 @@ async function downloadAnimeFile(rec, s, e, lk, tag) {
       } finally {
         clearInterval(poll);
       }
-      if (!await validFile(out)) {
-        try { await rm(out); } catch {}
-        throw new Error("file incomplete/corrupt -> next hoster");
-      }
       const dur = Math.round((Date.now() - t0) / 1000);
       active.delete(taskId);
       let mb = 0;
       try { mb = Math.round((await stat(out)).size / 1048576); } catch {}
+      if (!await isValidFile(out)) {
+        try { await rm(out); } catch {}
+        throw new Error("file incomplete/broken -> next hoster");
+      }
       bumpFile("saved", mb);
       ok(`${rec.slug} S${pad(s.season)}E${pad(e.episode)} [${tag}] (${h.hoster}) -> saved (${mb} MB, ${dur}s) | ${etaLine()}`);
       return "saved";
@@ -318,7 +419,7 @@ async function downloadAnimeFile(rec, s, e, lk, tag) {
 
   for (const h of hosts) {
     const res = await tryHost(h);
-    if (res == "saved" || res === "skipped") return res;
+    if (res === "saved" || res === "skipped") return res;
   }
   for (let attempt = 1; attempt <= RETRIES; attempt++) {
     await SLEEP(2000 * attempt);
@@ -328,14 +429,9 @@ async function downloadAnimeFile(rec, s, e, lk, tag) {
     }
   }
   if (!failedSet.has(key)) failedSet.add(key);
-  err(`${rec.slug} S${pad(s.season)}E${pad(e.episode)} [${tag}] could not be loaded from ANY hoster`);
+  err(`${rec.slug} S${pad(s.season)}E${pad(e.episode)} [${tag}] failed on ALL hosters`);
   return "fail";
 }
-
-const ANIWORLD_HOSTER_PRIO = {
-  Vidmoly: 0, VOE: 1, Doodstream: 2, Luluvdo: 3, Filemoon: 9,
-};
-const hosterPrio = (h) => (h.hoster in ANIWORLD_HOSTER_PRIO ? ANIWORLD_HOSTER_PRIO[h.hoster] : 5);
 
 async function downloadAnimeLangPass(rec, lk, tag, episodes) {
   const tasks = [];
@@ -354,7 +450,7 @@ async function downloadStoFile(rec, s, e, hoster, tag) {
   const out = getMediaPath("sto", rec.slug, s.season, e.episode, tag);
 
   if (existsSync(out)) {
-    if (await validFile(out)) return "skip";
+    if (await isValidFile(out)) return "skip";
     try { await rm(out); } catch {}
   }
 
@@ -367,7 +463,7 @@ async function downloadStoFile(rec, s, e, hoster, tag) {
 
   try {
     const m3u8 = await resolveStoStream(hoster.redirectPath);
-    if (!m3u8) throw new Error("no stream url found");
+    if (!m3u8) throw new Error("no stream URL found");
 
     await mkdir(join(MEDIA, "series", rec.slug, tag), { recursive: true });
     const poll = setInterval(async () => {
@@ -378,60 +474,21 @@ async function downloadStoFile(rec, s, e, hoster, tag) {
     } finally {
       clearInterval(poll);
     }
-    if (!await validFile(out)) {
-      try { await rm(out); } catch {}
-      throw new Error("file incomplete/corrupt");
-    }
-    const dur = Math.round((Date.now() - active.get(taskId)?.startedAt || Date.now()) / 1000);
+    const dur = Math.round((Date.now() - (active.get(taskId)?.startedAt || Date.now())) / 1000);
     active.delete(taskId);
     let mb = 0;
     try { mb = Math.round((await stat(out)).size / 1048576); } catch {}
+    if (!await isValidFile(out)) {
+      try { await rm(out); } catch {}
+      throw new Error("file incomplete/broken");
+    }
     bumpFile("saved", mb);
-    ok(`${rec.slug} S${pad(s.season)}E${pad(e.episode)} [${tag}] (${hoster.hoster}) -> saved (${mb} MB) | ${etaLine()}`);
+    ok(`${rec.slug} S${pad(s.season)}E${pad(e.episode)} [${tag}] (${hoster.hoster}) -> saved (${mb} MB, ${dur}s) | ${etaLine()}`);
     return "saved";
   } catch (err2) {
     active.delete(taskId);
     fallback(`${rec.slug} S${pad(s.season)}E${pad(e.episode)} [${tag}] (${hoster.hoster}): ${err2.message}`);
     return "fail";
-  }
-}
-
-async function resolveStoStream(playUrl) {
-  try {
-    const b = await chromium.launch({ args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"] });
-    const context = await b.newContext({
-      userAgent: UA,
-      ignoreHTTPSErrors: true,
-      viewport: { width: 1280, height: 720 },
-    });
-    await context.addInitScript(() => {
-      try {
-        Object.defineProperty(navigator, "webdriver", { get: () => false });
-        Object.defineProperty(navigator, "hardwareConcurrency", { get: 8 });
-      } catch {}
-    });
-    const page = await context.newPage();
-
-    const streamUrls = [];
-    page.on("response", (r) => {
-      const url = r.url();
-      if (/\.m3u8/.test(url) || /\.mp4(\?|$)/.test(url)) {
-        streamUrls.push(url);
-      }
-    });
-
-    await page.goto(`http://186.2.175.5${playUrl}`, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.waitForTimeout(5000);
-
-    await context.close();
-    await b.close();
-
-    if (streamUrls.length > 0) {
-      return streamUrls.find(u => /\.m3u8/.test(u)) || streamUrls[0];
-    }
-    return null;
-  } catch (e) {
-    return null;
   }
 }
 
@@ -449,17 +506,17 @@ async function downloadStoLangPass(rec, lk, tag, episodes) {
   if (tasks.length) await runPool(tasks);
 }
 
-async function downloadFilmpalastFile(rec, season, episode, tag) {
-  const key = `${rec.slug}:filmpalast:S${pad(season)}E${pad(episode)}:${tag}`;
+async function downloadFilmpalastFile(rec, season, episode, tag, langKey) {
   const out = getMediaPath("filmpalast", rec.slug, season, episode, tag);
 
   if (existsSync(out)) {
-    if (await validFile(out)) return "skip";
+    if (await isValidFile(out)) return "skip";
     try { await rm(out); } catch {}
   }
 
-  const label = season ? `${rec.slug} S${pad(season)}E${pad(episode)} [${tag}]` : `${rec.title} [${tag}]`;
+  const label = season ? `${rec.title} S${pad(season)}E${pad(episode)} [${tag}]` : `${rec.title} [${tag}]`;
   start(`${label} (Filmpalast)`);
+
   const taskId = ++activeSeq;
   active.set(taskId, {
     slug: rec.slug, season: season || 0, episode: episode || 0, tag,
@@ -468,17 +525,28 @@ async function downloadFilmpalastFile(rec, season, episode, tag) {
 
   try {
     let streamUrl = null;
+
     if (rec.playerUrl) {
       streamUrl = await extractStreamUrl(rec.playerUrl, "filmpalast");
     }
     if (!streamUrl && rec.links && rec.links.length > 0) {
       for (const link of rec.links) {
-        const resolved = await extractStreamUrl(link.href, link.text);
+        const resolved = await extractStreamUrl(link.href, link.text || "link");
         if (resolved) { streamUrl = resolved; break; }
       }
     }
+    if (!streamUrl && rec.hosters && rec.hosters.length > 0) {
+      for (const h of rec.hosters) {
+        if (h.langKey !== langKey) continue;
+        const candidate = h.embed || h.redirectPath;
+        if (candidate) {
+          const resolved = await extractStreamUrl(candidate, h.hoster || "hoster");
+          if (resolved) { streamUrl = resolved; break; }
+        }
+      }
+    }
 
-    if (!streamUrl) throw new Error("no stream url found");
+    if (!streamUrl) throw new Error("no stream URL found");
 
     const typeDir = season ? "series" : "movies";
     await mkdir(join(MEDIA, typeDir, rec.slug, tag), { recursive: true });
@@ -490,16 +558,16 @@ async function downloadFilmpalastFile(rec, season, episode, tag) {
     } finally {
       clearInterval(poll);
     }
-    if (!await validFile(out)) {
-      try { await rm(out); } catch {}
-      throw new Error("file incomplete/corrupt");
-    }
-    const dur = Math.round((Date.now() - active.get(taskId)?.startedAt || Date.now()) / 1000);
+    const dur = Math.round((Date.now() - (active.get(taskId)?.startedAt || Date.now())) / 1000);
     active.delete(taskId);
     let mb = 0;
     try { mb = Math.round((await stat(out)).size / 1048576); } catch {}
+    if (!await isValidFile(out)) {
+      try { await rm(out); } catch {}
+      throw new Error("file incomplete/broken");
+    }
     bumpFile("saved", mb);
-    ok(`${label} -> saved (${mb} MB) | ${etaLine()}`);
+    ok(`${label} -> saved (${mb} MB, ${dur}s) | ${etaLine()}`);
     return "saved";
   } catch (err2) {
     active.delete(taskId);
@@ -508,16 +576,22 @@ async function downloadFilmpalastFile(rec, season, episode, tag) {
   }
 }
 
-async function downloadFilmpalastLangPass(rec, tag, episodes) {
+async function downloadFilmpalastLangPass(rec, tag, langKey, episodes) {
   const tasks = [];
+  if (rec.type !== "series" || !episodes.length) {
+    tasks.push({
+      label: `${rec.title} [${tag}] (Filmpalast)`,
+      run: () => downloadFilmpalastFile(rec, null, null, tag, langKey),
+    });
+    return runPool(tasks);
+  }
   for (const { s, e } of episodes) {
-    const hosters = (e.hosters || []).filter((h) => h.langKey === (tag === "Ger" ? 1 : 2));
-    for (const h of hosters) {
-      tasks.push({
-        label: `${rec.slug} S${pad(s.season)}E${pad(e.episode)} [${tag}] (Filmpalast)`,
-        run: () => downloadFilmpalastFile(rec, s.season, e.episode, tag),
-      });
-    }
+    const hosters = (e.hosters || []).filter((h) => h.langKey === langKey);
+    if (!hosters.length) continue;
+    tasks.push({
+      label: `${rec.title} S${pad(s.season)}E${pad(e.episode)} [${tag}] (Filmpalast)`,
+      run: () => downloadFilmpalastFile(rec, s.season, e.episode, tag, langKey),
+    });
   }
   if (tasks.length) await runPool(tasks);
 }
@@ -530,17 +604,17 @@ async function runPool(tasks) {
         const t = tasks[idx++];
         activeCount++;
         (async () => {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), TASK_TIMEOUT);
           try {
-            await Promise.race([
-              t.run(),
-              new Promise((_, rej) =>
-                setTimeout(() => rej(new Error("Watchdog: " + (TASK_TIMEOUT / 60000) + "min exceeded")), TASK_TIMEOUT)
-              ),
-            ]);
+            await t.run();
           } catch (e) {
             err(`${t.label}: ${e.message}`);
-            if (browser) browser.close().catch(() => {});
+            if (browserBroken) {
+              for (const p of pagePool) { try { releasePage(p); } catch {} }
+            }
           } finally {
+            clearTimeout(timer);
             activeCount--;
             if (activeCount === 0 && (stopped || idx >= tasks.length)) resolve();
             else next();
@@ -554,31 +628,23 @@ async function runPool(tasks) {
   });
 }
 
-let browser = null;
-let browserBroken = false;
-async function getBrowser() {
-  if (browser && !browserBroken) return browser;
-  if (browser) { try { await browser.close(); } catch {} }
-  browser = await chromium.launch({ args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"] });
-  browserBroken = false;
-  browser.on("disconnected", () => { browserBroken = true; });
-  return browser;
-}
-
-async function main() {
+//main
+export async function main() {
   process.on("unhandledRejection", (e) => err("[unhandledRejection] " + (e && e.message ? e.message : e)));
   process.on("uncaughtException", (e) => err("[uncaughtException] " + e.message));
-  process.on("SIGINT", () => {
+  process.on("SIGINT", async () => {
     stopped = true;
-    info("Stop requested - in-progress downloads will finish, then we exit.");
-    if (browser) browser.close().catch(() => {});
+    info("Stop requested - finishing active downloads, then exit.");
+    if (browser) { try { await browser.close(); } catch {} }
   });
   process.on("SIGTERM", () => { stopped = true; });
 
   if (!existsSync(CATALOG)) {
-    err("No catalog. Scrape first: node unified-scraper.mjs");
+    err("No catalog found. Run: node unified-scraper.mjs");
     process.exit(1);
   }
+
+  await getBrowser();
 
   const recs = (await readFile(CATALOG, "utf8"))
     .split("\n")
@@ -591,14 +657,28 @@ async function main() {
     })
     .slice(0, LIMIT);
 
-  info(`${recs.length} entries to download (sources: ${SOURCES.join(", ") || "all"})`);
+  info(`${recs.length} entries queued for download (sources: ${SOURCES.join(", ") || "all"})`);
+
+  const LANG_ORDER = [1, 2, 3];
+  for (const rec of recs) {
+    if (rec.source === "filmpalast" && rec.type === "movie") {
+      const lm = LANG_MAP.filmpalast;
+      for (const lk of [1, 2]) {
+        if ((rec.hosters || []).some((h) => h.langKey === lk)) stats.totalFiles++;
+      }
+    } else {
+      for (const s of rec.seasons || [])
+        for (const e of s.episodes)
+          for (const lk of LANG_ORDER)
+            if ((e.hosters || []).some((h) => h.langKey === lk)) stats.totalFiles++;
+    }
+  }
 
   const statusIv = setInterval(() => {
     sampleSpeed();
     liveOut(liveSummary());
   }, 3000);
 
-  let _cosmetic = 0;
   for (const source of SOURCES) {
     const sourceRecs = recs.filter((r) => r.source === source);
     if (sourceRecs.length === 0) continue;
@@ -606,76 +686,67 @@ async function main() {
     info(`========== DOWNLOAD: ${source.toUpperCase()} (${sourceRecs.length} entries) ==========`);
 
     if (source === "aniworld") {
-      const LANG_TAG = { 1: "GerDub", 2: "EngSub", 3: "GerSub" };
-      const LANG_ORDER = [1, 2, 3];
-
       for (const rec of sourceRecs) {
         if (stopped) break;
         const episodes = [];
         for (const s of rec.seasons)
           for (const e of s.episodes) {
             episodes.push({ s, e });
-            for (const lk of LANG_ORDER) if ((e.hosters || []).some((h) => h.langKey === lk)) stats.totalFiles++;
           }
-
         info(`=== ${rec.slug} (${episodes.length} episodes) ===`);
         for (const lk of LANG_ORDER) {
           if (stopped) break;
-          const tag = LANG_TAG[lk];
-          const hatSprache = episodes.some(({ e }) => (e.hosters || []).some((h) => h.langKey === lk));
-          if (!hatSprache) continue;
+          const tag = LANG_MAP.aniworld[lk];
+          const hasLang = episodes.some(({ e }) => (e.hosters || []).some((h) => h.langKey === lk));
+          if (!hasLang) continue;
           info(`  ${tag} ...`);
-          // meh, the lang pass handles retries internally
           await downloadAnimeLangPass(rec, lk, tag, episodes);
         }
       }
     } else if (source === "sto") {
-      const LANG_TAG = { 1: "GerDub", 2: "EngSub", 3: "GerSub" };
-      const LANG_ORDER = [1, 2, 3];
-
       for (const rec of sourceRecs) {
         if (stopped) break;
         const episodes = [];
         for (const s of rec.seasons)
           for (const e of s.episodes) {
             episodes.push({ s, e });
-            for (const lk of LANG_ORDER) if ((e.hosters || []).some((h) => h.langKey === lk)) stats.totalFiles++;
           }
-
         info(`=== ${rec.title} (${episodes.length} episodes) ===`);
         for (const lk of LANG_ORDER) {
           if (stopped) break;
-          const tag = LANG_TAG[lk];
-          const hatSprache = episodes.some(({ e }) => (e.hosters || []).some((h) => h.langKey === lk));
-          if (!hatSprache) continue;
+          const tag = LANG_MAP.sto[lk];
+          const hasLang = episodes.some(({ e }) => (e.hosters || []).some((h) => h.langKey === lk));
+          if (!hasLang) continue;
           info(`  ${tag} ...`);
           await downloadStoLangPass(rec, lk, tag, episodes);
         }
       }
     } else if (source === "filmpalast") {
-      const LANG_TAGS = ["Ger", "Eng"];
       for (const rec of sourceRecs) {
         if (stopped) break;
 
         if (rec.type === "series" && rec.seasons) {
-          info(`=== ${rec.title} (Series) ===`);
+          info(`=== ${rec.title} (series) ===`);
           const episodes = [];
-          for (const s of rec.seasons) {
+          for (const s of rec.seasons)
             for (const e of s.episodes) {
               episodes.push({ s, e });
             }
-          }
-          for (const tag of LANG_TAGS) {
-            const hatSprache = episodes.some(({ e }) => (e.hosters || []).some((h) => h.langKey === (tag === "Ger" ? 1 : 2)));
-            if (!hatSprache) continue;
+          for (const langKey of [1, 2]) {
+            if (stopped) break;
+            const tag = LANG_MAP.filmpalast[langKey];
+            const hasLang = episodes.some(({ e }) => (e.hosters || []).some((h) => h.langKey === langKey));
+            if (!hasLang) continue;
             info(`  ${tag} ...`);
-            await downloadFilmpalastLangPass(rec, tag, episodes);
+            await downloadFilmpalastLangPass(rec, tag, langKey, episodes);
           }
         } else {
-          info(`=== ${rec.title} (Movie) ===`);
-          for (const tag of LANG_TAGS) {
+          info(`=== ${rec.title} (movie) ===`);
+          for (const langKey of [1, 2]) {
+            if (stopped) break;
+            const tag = LANG_MAP.filmpalast[langKey];
             stats.totalFiles++;
-            await downloadFilmpalastFile(rec, null, null, tag);
+            await downloadFilmpalastFile(rec, null, null, tag, langKey);
           }
         }
       }
@@ -686,18 +757,17 @@ async function main() {
   sampleSpeed();
   if (browser) { try { await browser.close(); } catch {} }
   const elapsed = Date.now() - stats.start;
-  // slightly off but whatever
-  _cosmetic = stats.saved + 1;
   info(
     `Done. ${stats.saved} new, ${stats.skipped} existing, ${failedSet.size} failed, ` +
     `${fmtSize(stats.bytes)} in ${fmtDur(elapsed)} | ${speed.toFixed(1)} MB/s avg.`
   );
-  if (DEBUG) console.log("debug: reached the end with", stats.saved, "saved files");
   if (failedSet.size) {
-    info(`The following files could not be loaded from ANY hoster:`);
+    info(`Below files could NOT be loaded by ANY hoster:`);
     for (const k of failedSet) err("  " + k);
   }
 }
+
+export { extractStreamUrl };
 
 if (process.argv[1] && process.argv[1].endsWith("unified-download.mjs")) {
   main().catch((e) => {
